@@ -1,0 +1,58 @@
+services:
+  nepse-news-api:
+    build: ./nepse-news-scraper
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Kathmandu
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - nepse-network          
+    depends_on:
+      - db
+
+  db:
+      image: postgres:15
+      container_name: nepse-postgres-db
+      restart: unless-stopped
+      environment:
+        POSTGRES_DB: ${POSTGRES_DB:-nepse}
+        POSTGRES_USER: ${POSTGRES_USER:-superset}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-superset_pass}
+        TZ: Asia/Kathmandu
+        PGTZ: Asia/Kathmandu
+      ports:
+        - 5432:5432
+      volumes:
+        - postgres_data:/var/lib/postgresql/data
+        - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      networks:
+        - nepse-network
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - nepse-news-api
+    networks:
+      - nepse-network
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/pgsql
+
+networks:
+ nepse-network:
+    driver: bridge

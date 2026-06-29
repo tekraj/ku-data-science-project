@@ -1,0 +1,41 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply min-h-screen bg-slate-950 font-sans text-slate-100;
+    background-image:
+      radial-gradient(circle at 10% -10%, rgba(15, 118, 110, 0.35), transparent 45%),
+      radial-gradient(circle at 90% 0%, rgba(59, 130, 246, 0.3), transparent 35%),
+      linear-gradient(160deg, #020617 0%, #0b1228 45%, #020617 100%);
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-slate-700/70 bg-slate-900/65 p-4 shadow-2xl shadow-black/30 backdrop-blur-md;
+  }
+
+  .metric-card {
+    @apply panel p-5;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-slate-600 bg-slate-950/60 px-4 py-2.5 text-slate-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/30;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-400 to-blue-400 px-4 py-2.5 font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-xl border border-slate-600 bg-slate-900/65 px-4 py-2.5 font-medium text-slate-100 transition hover:border-slate-400 hover:bg-slate-800/80;
+  }
+}
