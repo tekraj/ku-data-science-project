@@ -1,20 +1,4 @@
 services:
-  nepse-news-api:
-    build: ./nepse-news-scraper
-    restart: unless-stopped
-    ports:
-      - "8001:8001"
-    env_file:
-      - .env
-    environment:
-      TZ: Asia/Kathmandu
-    volumes:
-      - ./logs:/app/logs
-    networks:
-      - nepse-network          
-    depends_on:
-      - db
-
   db:
       image: postgres:15
       container_name: nepse-postgres-db
@@ -41,9 +25,74 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - nepse-news-api
+      - api-service
     networks:
       - nepse-network
+
+  api-service:
+    build:
+      context: .
+      dockerfile: api-service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Kathmandu
+    networks:
+      - nepse-network
+    depends_on:
+      - db
+
+  scraper-service:
+    build:
+      context: .
+      dockerfile: scraper-service/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Kathmandu
+      TEMPORAL_ADDRESS: temporal:7233
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - nepse-network
+    depends_on:
+      - db
+      - temporal
+
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    restart: unless-stopped
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-superset}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-superset_pass}
+      POSTGRES_SEEDS: db
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+    ports:
+      - "7233:7233"
+    networks:
+      - nepse-network
+    depends_on:
+      - db
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    restart: unless-stopped
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8080:8080"
+    networks:
+      - nepse-network
+    depends_on:
+      - temporal
 
 volumes:
   postgres_data:

@@ -1,0 +1,7 @@
+temporalio
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+pytz==2024.1
+nepali-datetime==1.0.8.5
+-e ../nepse-common

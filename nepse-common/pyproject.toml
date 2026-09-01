@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nepse-common"
+version = "0.1.0"
+description = "Shared config, ORM models, and Pydantic schemas for the NEPSE microservices."
+requires-python = ">=3.10"
+dependencies = [
+    "sqlalchemy>=2.0,<2.1",
+    "psycopg2-binary==2.9.9",
+    "pydantic>=2.0,<3.0",
+    "python-dotenv==0.21.0",
+    "alembic>=1.13,<2.0",
+    "bcrypt>=4.0,<5.0",
+]
+
+[tool.setuptools]
+packages = ["nepse_common", "nepse_common.db", "nepse_common.models", "nepse_common.schemas", "nepse_common.constants"]
+
+[tool.setuptools.package-dir]
+nepse_common = "nepse_common"

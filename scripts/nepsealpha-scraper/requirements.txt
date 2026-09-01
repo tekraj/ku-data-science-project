@@ -1,0 +1,8 @@
+# Primary scraper (scrape_sharesansar.py) -- plain HTTP, no browser needed.
+requests>=2.31,<3.0
+
+# Only needed for the Playwright fallback (scrape_nepsealpha.py), kept in
+# case sharesansar.com ever stops being usable as a source. Comment out if
+# you don't need it -- it pulls in a real Chromium download via
+# `playwright install chromium`.
+playwright>=1.40,<2.0
