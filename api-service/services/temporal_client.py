@@ -4,7 +4,13 @@ import os
 
 from temporalio.client import Client
 
-TASK_QUEUE = "nepse-scraper-queue"
+# Must match news-service's task queue name (see news-service/worker.py
+# _GENERAL_QUEUE) -- HistoricalBackfillWorkflow (GDELT-backed news backfill)
+# lives there, not in nepse-service. Renamed from "nepse-scraper-queue" when
+# scraper-service was split into news-service/nepse-service; left stale this
+# would silently misroute admin-triggered backfills onto a queue no worker
+# polls.
+TASK_QUEUE = "news-scraper-queue"
 BACKFILL_WORKFLOW_NAME = "HistoricalBackfillWorkflow"
 
 _client: Client | None = None

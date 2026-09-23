@@ -1,19 +1,19 @@
 """
 Seeds nepse_index from CSV files in data/sector-2021-2026/ (existing checked-in
 exports plus anything newly downloaded by scrape_nepsealpha.py), using the same
-parsing and dedup logic as scraper-service's startup CSV import
-(scraper-service/activities/csv_import_activities.py: parse_and_write_csv_activity)
+parsing and dedup logic as nepse-service's startup CSV import
+(nepse-service/activities/csv_import_activities.py: parse_and_write_csv_activity)
 -- reused directly here rather than reimplemented, so both code paths stay in sync.
 
 Safe to re-run: existing (index_name, scraped_at) pairs already in the table are
 skipped, so this only inserts genuinely new rows.
 
 Requirements: run with a Python environment that has nepse-common installed
-(e.g. the same venv used for api-service/scraper-service development), and
-scraper-service's package on the import path for historical_nepse_loader.
+(e.g. the same venv used for api-service/nepse-service development), and
+nepse-service's package on the import path for historical_nepse_loader.
 
 Usage:
-    PYTHONPATH=/path/to/scraper-service python seed_from_csv.py [csv_dir]
+    PYTHONPATH=/path/to/nepse-service python seed_from_csv.py [csv_dir]
 
     csv_dir defaults to data/sector-2021-2026/ relative to the repo root.
 """
@@ -33,10 +33,12 @@ from nepse_common.schemas.scraped import ScrapedIndexPoint
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_CSV_DIR = REPO_ROOT / "data" / "sector-2021-2026"
 
-# scraper-service isn't installed as a package -- its `scraper/` module is a
+# nepse-service isn't installed as a package -- its `scraper/` module is a
 # plain sibling-rooted directory, so add its parent to sys.path to import
-# historical_nepse_loader without duplicating its parsing logic here.
-sys.path.insert(0, str(REPO_ROOT / "scraper-service"))
+# historical_nepse_loader without duplicating its parsing logic here. (Moved
+# here from scraper-service/news-service when the NEPSE-specific scraping
+# code was split into its own service.)
+sys.path.insert(0, str(REPO_ROOT / "nepse-service"))
 from scraper.historical_nepse_loader import parse_historical_nepse_csvs  # noqa: E402
 
 

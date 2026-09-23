@@ -45,10 +45,28 @@ services:
     depends_on:
       - db
 
-  scraper-service:
+  news-service:
     build:
       context: .
-      dockerfile: scraper-service/Dockerfile
+      dockerfile: news-service/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Kathmandu
+      TEMPORAL_ADDRESS: temporal:7233
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - nepse-network
+    depends_on:
+      - db
+      - temporal
+
+  nepse-service:
+    build:
+      context: .
+      dockerfile: nepse-service/Dockerfile
     restart: unless-stopped
     env_file:
       - .env

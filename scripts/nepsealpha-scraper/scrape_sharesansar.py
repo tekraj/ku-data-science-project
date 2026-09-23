@@ -83,8 +83,10 @@ class ScrapeJob:
 
 # index_id values read directly from the <select name="index"> options on
 # https://www.sharesansar.com/index-history-data. Symbol codes match
-# scraper-service/scraper/historical_nepse_loader.py's _SYMBOL_TO_INDEX_NAME
-# so the existing seeding pipeline maps them to the same nepse_index rows.
+# nepse-service/scraper/historical_nepse_loader.py's _SYMBOL_TO_INDEX_NAME
+# (moved here from scraper-service/news-service when the NEPSE-specific
+# scraping code was split into its own service) so the existing seeding
+# pipeline maps them to the same nepse_index rows.
 JOBS: list[ScrapeJob] = [
     # Mid-history gap: CSV coverage ends ~2026-01-14, live scraping starts 2026-06-29.
     ScrapeJob("BANKING", 1, "2026-01-14", "2026-06-29"),

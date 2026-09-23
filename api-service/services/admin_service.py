@@ -16,7 +16,7 @@ from services.temporal_client import BACKFILL_WORKFLOW_NAME, TASK_QUEUE
 class AdminBackfillService:
     """Kicks off / inspects the historical backfill Temporal workflow.
 
-    The scraper-service side (the actual @workflow.defn implementation) is built
+    The news-service side (the actual @workflow.defn implementation) is built
     separately; this only issues the client-side start_workflow call assuming
     that workflow name / task queue will exist there.
     """

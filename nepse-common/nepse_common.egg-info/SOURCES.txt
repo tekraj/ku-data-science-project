@@ -18,7 +18,12 @@ nepse_common/models/admin_user.py
 nepse_common/models/historical_backfill_progress.py
 nepse_common/models/historical_backfill_url.py
 nepse_common/models/historical_cursor_state.py
+nepse_common/models/historical_idwalk_cursor.py
+nepse_common/models/nepse_floorsheet.py
 nepse_common/models/nepse_index.py
+nepse_common/models/nepse_market_depth.py
+nepse_common/models/nepse_sector_summary.py
+nepse_common/models/nepse_today_price.py
 nepse_common/models/news_article.py
 nepse_common/models/pipeline_run_log.py
 nepse_common/schemas/__init__.py

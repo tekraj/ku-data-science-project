@@ -16,7 +16,15 @@ class DatabaseConfig:
 
 @dataclass(frozen=True)
 class ScraperConfig:
-    interval_minutes: int
+    # NOTE: interval_minutes was split into news_interval_minutes and
+    # nepse_interval_minutes when scraper-service was split into
+    # news-service (20 news portals + news historical backfills) and
+    # nepse-service (live NEPSE index + nepalstock.com.np market-data
+    # scrapes). Both services import this same shared config loader --
+    # the loader itself is NOT forked -- so each service just reads the
+    # field it cares about.
+    news_interval_minutes: int
+    nepse_interval_minutes: int
     request_timeout: int
     max_articles_per_portal: int
     live_nepse_scrape_enabled: bool
@@ -72,7 +80,16 @@ def load_app_config() -> AppConfig:
             password=os.getenv("POSTGRES_PASSWORD", "superset_pass"),
         ),
         scraper=ScraperConfig(
-            interval_minutes=int(os.getenv("SCRAPER_INTERVAL_MINUTES", "30")),
+            # News portal scraping cadence. Default lowered from 30 to 15
+            # minutes per explicit ask -- 15 minutes also happens to divide
+            # NPT's 5h45m UTC offset evenly, so it needs no NPT-alignment
+            # offset in register_schedules.py (see _npt_aligned_offset there).
+            news_interval_minutes=int(os.getenv("SCRAPER_INTERVAL_MINUTES", "15")),
+            # NEPSE market-data scraping cadence (nepse-service): live index
+            # plus the 4 nepalstock.com.np endpoints (today-price, floor
+            # sheet, sector summary, market depth), all on a tight 1-minute
+            # schedule since market data goes stale fast during trading hours.
+            nepse_interval_minutes=int(os.getenv("NEPSE_SCRAPER_INTERVAL_MINUTES", "1")),
             request_timeout=int(os.getenv("SCRAPER_REQUEST_TIMEOUT", "15")),
             max_articles_per_portal=int(os.getenv("SCRAPER_MAX_ARTICLES_PER_PORTAL", "20")),
             live_nepse_scrape_enabled=_env_bool("LIVE_NEPSE_SCRAPE_ENABLED", False),

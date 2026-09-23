@@ -1,0 +1,6 @@
+temporalio
+requests==2.32.3
+beautifulsoup4==4.12.3
+pytz==2024.1
+wasmtime==27.0.2
+-e ../nepse-common
