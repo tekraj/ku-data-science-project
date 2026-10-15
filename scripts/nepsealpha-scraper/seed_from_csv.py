@@ -1,5 +1,6 @@
 """
-Seeds nepse_index from CSV files in data/sector-2021-2026/ (existing checked-in
+Seeds nepse_index (close only) and nepse_index_daily (full OHLC + turnover)
+from CSV files in data/sector-2021-2026/ (existing checked-in
 exports plus anything newly downloaded by scrape_nepsealpha.py), using the same
 parsing and dedup logic as nepse-service's startup CSV import
 (nepse-service/activities/csv_import_activities.py: parse_and_write_csv_activity)
@@ -27,6 +28,7 @@ from sqlalchemy import select
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
+from nepse_common.db.upserts import upsert_index_daily
 from nepse_common.models import NepseIndex
 from nepse_common.schemas.scraped import ScrapedIndexPoint
 
@@ -88,8 +90,12 @@ def seed(csv_dir: str) -> dict[str, int]:
             session.execute(NepseIndex.__table__.insert(), deduped_insert)
             inserted = len(deduped_insert)
 
+        # Full OHLC + turnover bars, lowest source precedence (never
+        # overwrites merolagani/official rows in nepse_index_daily).
+        daily = upsert_index_daily(session, raw_rows, source="csv")
+
     print(f"Parsed {parsed} rows from {csv_dir}, inserted {inserted} new rows "
-          f"({parsed - inserted} were already present).")
+          f"({parsed - inserted} were already present); upserted {daily} daily bars.")
     return {"parsed": parsed, "inserted": inserted}
 
 

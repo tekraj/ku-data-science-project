@@ -14,7 +14,8 @@ with workflow.unsafe.imports_passed_through():
     from activities.pipeline_log_activities import write_pipeline_run_log_activity
 
 _DEFAULT_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
-_CSV_IMPORT_MESSAGE = "historical_nepse_csv_import"
+# Keep in sync with activities/csv_import_activities.py (see the note there).
+_CSV_IMPORT_MESSAGE = "historical_nepse_csv_import_v2"
 
 
 @workflow.defn

@@ -7,12 +7,17 @@ from temporalio import activity
 
 from nepse_common.config import load_app_config
 from nepse_common.db.session import session_scope
+from nepse_common.db.upserts import upsert_index_daily
 from nepse_common.models import NepseIndex, PipelineRunLog
 from nepse_common.schemas.scraped import ScrapedIndexPoint
 
 from scraper.historical_nepse_loader import parse_historical_nepse_csvs
 
-_CSV_IMPORT_MESSAGE = "historical_nepse_csv_import"
+# Bumped from "historical_nepse_csv_import" when the import started also
+# writing full daily bars to nepse_index_daily, so deployments that already
+# ran the close-only import re-run it once (the nepse_index part stays
+# deduped, so nothing is duplicated). Must match the workflow's constant.
+_CSV_IMPORT_MESSAGE = "historical_nepse_csv_import_v2"
 
 
 @activity.defn
@@ -101,7 +106,12 @@ async def parse_and_write_csv_activity(csv_dir: str) -> dict[str, int]:
             session.execute(NepseIndex.__table__.insert(), deduped_insert)
             inserted = len(deduped_insert)
 
+        # Full daily bars, lowest precedence: never overwrites merolagani or
+        # official rows for the same day.
+        daily = upsert_index_daily(session, raw_rows, source="csv")
+
     activity.logger.info(
-        f"[NEPSE CSV] Parsed {parsed} rows from {csv_dir}, inserted {inserted}."
+        f"[NEPSE CSV] Parsed {parsed} rows from {csv_dir}, inserted {inserted}, "
+        f"daily bars upserted {daily}."
     )
     return {"parsed": parsed, "inserted": inserted}

@@ -1,0 +1,123 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{fontspec}
+\usepackage[english]{babel}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
+
+\title{\textbf{A Unified Mathematical Framework for Market Crash Detection: Integrating TDA, Mean Field Games, and Hybrid Stochastic Processes}}
+\author{Research Proposal and Roadmap}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Financial markets are complex, adaptive systems characterized by multi-scale dynamics, where microscopic agent interactions can precipitate macroscopic structural collapse. Traditional models frequently fail to anticipate sudden market crashes because they isolate volatility modeling from agent behavior and systemic topology. This document outlines a roadmap for a novel market crash detector model that unifies Topological Data Analysis (TDA), Mean Field Game (MFG) theory, and a Hybrid Jump-Diffusion continuous-time GARCH (COGARCH) process. 
+\end{abstract}
+
+\section{Introduction}
+
+The anticipation of financial market crashes remains one of the most formidable challenges in quantitative finance. Market anomalies are rarely the result of a single exogenous shock; rather, they emerge from the complex interplay of sudden asset jumps, systemic volatility clustering, herd behavior among market participants, and the breakdown of market correlation structures. To capture these multifaceted phenomena, we propose a multi-layered mathematical model.
+
+The foundation of the asset price dynamics is modeled using a \textbf{Hybrid Jump-Diffusion and COGARCH (Continuous-Time GARCH)} framework. While Jump-Diffusion captures the sudden, discontinuous shifts in asset prices, the COGARCH process effectively models the stylized facts of financial returns, particularly volatility clustering and heavy tails in a continuous-time setting. 
+
+However, price dynamics alone are insufficient for predicting systemic failure. To model the underlying driver of endogenous crashes---herd behavior---we employ \textbf{Mean Field Game (MFG) Theory}. MFGs provide a robust analytical framework for modeling the strategic interactions of a massive number of infinitesimally small agents (e.g., retail traders, algorithmic bots). By solving the coupled Hamilton-Jacobi-Bellman (HJB) and Fokker-Planck-Kolmogorov (FPK) equations, we can quantify the threshold at which agent consensus transitions into panic selling.
+
+Finally, to bridge the gap between abstract agent dynamics and observable market data, we utilize \textbf{Topological Data Analysis (TDA)}. Specifically, by computing the persistent homology of dynamic market correlation networks (e.g., via Vietoris-Rips complexes), TDA detects the geometric ``shape'' of the market. Prior to a crash, markets often exhibit topological phase transitions---such as the sudden tightening of point clouds or the collapse of high-dimensional holes (measured by Betti numbers)---serving as a highly sensitive early warning signal.
+
+\section{Mathematical Foundations}
+
+\subsection{Hybrid Jump-Diffusion + COGARCH}
+The log-price process $X_t = \ln(S_t)$ is modeled as:
+\begin{equation}
+    dX_t = \mu(t) dt + \sqrt{V_{t-}} dW_t + dJ_t
+\end{equation}
+where $W_t$ is a standard Brownian motion, $J_t$ is a pure jump L\'evy process representing sudden shocks, and $V_t$ is the stochastic variance driven by a COGARCH(1,1) process. The COGARCH variance updates continuously based on the quadratic variation of the underlying L\'evy process, capturing self-exciting volatility.
+
+\subsection{Mean Field Game Formulation}
+Let $m(t,x)$ be the density of agents holding position $x$ at time $t$. Agents optimize their trading strategy $\alpha_t$ to minimize a cost functional $J(\alpha)$. This yields the coupled MFG system:
+\begin{align}
+    \partial_t u + \min_{\alpha} \left\{ \frac{1}{2}\sigma^2 \partial_{xx} u + b(x, \alpha, m)\partial_x u + f(x, \alpha, m) \right\} &= 0 \quad \text{(HJB)} \\
+    \partial_t m - \frac{1}{2}\sigma^2 \partial_{xx} m + \partial_x (m \cdot b^*(x, m)) &= 0 \quad \text{(FPK)}
+\end{align}
+A crash signature is identified when the mass $m(t,x)$ rapidly concentrates, indicating extreme herd behavior.
+
+\subsection{Topological Data Analysis (TDA)}
+From multivariate price time series, a time-varying distance matrix $D_t$ is constructed (e.g., based on cross-correlation). Persistent homology tracks the evolution of Betti numbers $\beta_k(t)$ (where $\beta_0$ represents connected components, and $\beta_1$ represents 1D loops). A sudden decrease in $\beta_1$ accompanied by a specific persistence landscape signature indicates structural rigidity, preceding a crash.
+
+\section{Development Roadmap and Pipeline}
+
+The development of this hybrid crash detector follows a six-phase pipeline.
+
+\begin{enumerate}[label=\textbf{Phase \arabic*:}, leftmargin=*]
+    \item \textbf{Data Ingestion and Representation}
+    \begin{itemize}
+        \item Acquire high-frequency limit order book (LOB) and trades data.
+        \item Construct the empirical continuous-time return series and rolling cross-asset correlation matrices.
+    \end{itemize}
+
+    \item \textbf{Stochastic Calibration (Jump-Diffusion + COGARCH)}
+    \begin{itemize}
+        \item Filter the jump component $J_t$ from the continuous diffusion using thresholding techniques (e.g., bipower variation).
+        \item Calibrate the COGARCH(1,1) parameters using method of moments or pseudo-maximum likelihood estimation on the jump-adjusted returns.
+        \item Extract real-time jump intensities and volatility states as Feature Set 1.
+    \end{itemize}
+
+    \item \textbf{MFG Agent Simulation and Solvers}
+    \begin{itemize}
+        \item Define the terminal cost and running cost functions representing liquidity constraints and herd penalties.
+        \item Implement numerical solvers (e.g., finite difference methods or Physics-Informed Neural Networks) to solve the forward-backward FPK-HJB system.
+        \item Monitor the derivative of the mass distribution $\partial_t m(t,x)$ to extract systemic stress indicators (Feature Set 2).
+    \end{itemize}
+
+    \item \textbf{Topological Feature Extraction}
+    \begin{itemize}
+        \item Convert rolling correlation matrices into point clouds/distance matrices.
+        \item Compute Vietoris-Rips complexes using libraries like \texttt{GUDHI} or \texttt{Ripser}.
+        \item Generate persistence diagrams and compute Wasserstein distances between successive time windows to measure topological deformation (Feature Set 3).
+    \end{itemize}
+
+    \item \textbf{Detector Integration (The Early Warning System)}
+    \begin{itemize}
+        \item Concatenate the features: Volatility/Jump intensities (COGARCH), herd concentration gradients (MFG), and topological invariants (TDA).
+        \item Train a supervised anomaly detection model (e.g., Support Vector Machines, Random Forests, or LSTMs) using historical crash events as ground truth.
+        \item Establish dynamic thresholds for the output probability score to trigger crash alerts.
+    \end{itemize}
+
+    \item \textbf{Backtesting and Out-of-Sample Validation}
+    \begin{itemize}
+        \item Test the pipeline on historical market anomalies (e.g., 2008 Financial Crisis, 2010 Flash Crash, 2020 COVID-19 Crash).
+        \item Evaluate metrics: True Positive Rate (Sensitivity), False Alarm Rate, and Lead Time (time between the alert and the actual crash).
+    \end{itemize}
+\end{enumerate}
+
+New Research
+Moving from a standard vector space to a simplicial complex fundamentally changes the mathematics of continuous-time volatility, making this a genuine theoretical breakthrough for the COGARCH literature.
+
+Standard continuous-time GARCH (and even its multivariate extensions, MUCOGARCH) relies heavily on covariance matrices. It assumes that volatility spills over between assets strictly through pairwise, linear relationships. By upgrading the state space to a topological one, a Simplicial COGARCH model introduces **higher-order volatility clustering**.
+
+Here is how this addition mathematically distinguishes itself from standard COGARCH:
+
+**Higher-Order Contagion (Beyond Pairwise)**
+In traditional models, a shock to Asset A affects Asset B, which affects Asset C. In a Simplicial COGARCH framework, assets form triangles, tetrahedrons, and higher-dimensional simplices. You can mathematically define a volatility shock that only activates when a whole "simplex" (a complete cluster of 3 or 4 heavily entangled assets) is stressed simultaneously. It captures systemic, group-level volatility that pairwise correlations completely miss.
+
+**Lévy Processes on Simplicial Complexes**
+The driving force in a standard COGARCH model is a single, background Lévy process (representing sudden market news or jumps). Your new addition would require defining a Lévy process that operates over the edges and faces of a network. The jumps in volatility wouldn't just be changes in magnitude; they would be "topological jumps," where the background noise actively rewires the shape of the market, instantly linking previously uncorrelated sectors.
+
+**Volatility Trapped in Topological Holes**
+Using persistent homology, your model can identify 1-dimensional "holes" (cycles of assets that are correlated with each other in a ring, but lack a central stabilizing asset). In a Simplicial COGARCH model, you could prove that volatility shocks get "trapped" in these topological holes, creating resonance or feedback loops. This provides a rigorous mathematical explanation for why volatility clusters persist longer in certain fragmented market conditions.
+
+**State-Dependent Decay Rates**
+Standard COGARCH assumes volatility decays back to a baseline mean over time (mean reversion). In your addition, the decay parameter becomes a function of the Betti numbers (the count of topological features). If the market's topology is highly fragmented, the volatility equation updates its own autoregressive parameter to slow down the decay, perfectly mirroring how fear lingers in a structurally broken market.
+\section{Conclusion}
+By integrating the micro-structural agent dynamics of MFGs, the macro-structural geometric insights of TDA, and the rigorous stylized fact representation of COGARCH Jump-Diffusion, this pipeline offers a highly sophisticated, multi-dimensional approach to market crash detection. The mathematical synergy between these domains ensures that the detector is sensitive to both rapid endogenous herding and sudden exogenous shocks.
+
+\end{document}
+

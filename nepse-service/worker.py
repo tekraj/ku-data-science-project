@@ -17,6 +17,10 @@ from workflows.nepse_today_price_workflow import NepseTodayPriceScrapeWorkflow
 from workflows.nepse_sector_summary_workflow import NepseSectorSummaryScrapeWorkflow
 from workflows.nepse_floor_sheet_workflow import NepseFloorSheetScrapeWorkflow
 from workflows.nepse_market_depth_workflow import NepseMarketDepthScrapeWorkflow
+from workflows.nepse_floor_sheet_eod_workflow import NepseFloorSheetEodSweepWorkflow
+from workflows.nepse_end_of_day_workflow import NepseEndOfDayWorkflow
+from workflows.research_history_backfill_workflow import ResearchHistoryBackfillWorkflow
+from workflows.floor_sheet_history_backfill_workflow import FloorSheetHistoryBackfillWorkflow
 
 from activities.nepse_activities import (
     is_market_open_activity,
@@ -29,15 +33,28 @@ from activities.csv_import_activities import (
 )
 from activities.pipeline_log_activities import write_pipeline_run_log_activity
 from activities.nepse_market_activities import (
-    get_security_ids_activity,
+    backfill_floor_sheet_day_activity,
+    get_market_depth_universe_activity,
+    list_trading_days_activity,
     scrape_floor_sheet_activity,
-    scrape_market_depth_for_security_activity,
+    scrape_market_depth_batch_activity,
     scrape_sector_summary_activity,
     scrape_today_price_activity,
+    sweep_floor_sheet_activity,
     write_floor_sheet_activity,
     write_market_depth_activity,
     write_sector_summary_activity,
     write_today_price_activity,
+)
+from activities.research_data_activities import (
+    backfill_index_daily_activity,
+    backfill_intraday_ticks_activity,
+    backfill_stock_daily_activity,
+    capture_eod_stock_prices_activity,
+    capture_official_index_history_activity,
+    daily_refresh_due_activity,
+    mark_daily_refresh_done_activity,
+    sync_security_master_activity,
 )
 
 # All NEPSE market-data workflows/activities (live index, the 4
@@ -51,7 +68,12 @@ from activities.nepse_market_activities import (
 # ambiguity about which service's worker is polling which queue).
 _GENERAL_QUEUE = "nepse-market-queue"
 
-_CSV_IMPORT_WORKFLOW_ID = "historical-nepse-csv-import"
+# Versioned with the import's marker message (see csv_import_activities.py):
+# ALLOW_DUPLICATE_FAILED_ONLY never reuses an id that once succeeded, so a
+# changed import needs a new id to run once more.
+_CSV_IMPORT_WORKFLOW_ID = "historical-nepse-csv-import-v2"
+_RESEARCH_BACKFILL_STARTUP_ID = "research-history-backfill-startup"
+_FLOOR_SHEET_HISTORY_STARTUP_ID = "floor-sheet-history-backfill-startup"
 
 _ALL_WORKFLOWS = [
     NepseIndexScrapeWorkflow,
@@ -60,24 +82,39 @@ _ALL_WORKFLOWS = [
     NepseSectorSummaryScrapeWorkflow,
     NepseFloorSheetScrapeWorkflow,
     NepseMarketDepthScrapeWorkflow,
+    NepseFloorSheetEodSweepWorkflow,
+    NepseEndOfDayWorkflow,
+    ResearchHistoryBackfillWorkflow,
+    FloorSheetHistoryBackfillWorkflow,
 ]
 
 _ALL_ACTIVITIES = [
     is_market_open_activity,
+    backfill_floor_sheet_day_activity,
+    list_trading_days_activity,
     scrape_nepse_index_activity,
     write_nepse_index_activity,
     check_csv_import_done_activity,
     parse_and_write_csv_activity,
     write_pipeline_run_log_activity,
-    get_security_ids_activity,
+    get_market_depth_universe_activity,
     scrape_floor_sheet_activity,
-    scrape_market_depth_for_security_activity,
+    scrape_market_depth_batch_activity,
     scrape_sector_summary_activity,
     scrape_today_price_activity,
+    sweep_floor_sheet_activity,
     write_floor_sheet_activity,
     write_market_depth_activity,
     write_sector_summary_activity,
     write_today_price_activity,
+    backfill_index_daily_activity,
+    backfill_intraday_ticks_activity,
+    backfill_stock_daily_activity,
+    capture_eod_stock_prices_activity,
+    capture_official_index_history_activity,
+    daily_refresh_due_activity,
+    mark_daily_refresh_done_activity,
+    sync_security_master_activity,
 ]
 
 
@@ -111,6 +148,32 @@ async def main() -> None:
         # (see check_csv_import_done_activity's has_successful_pipeline_message
         # check, unchanged from the pre-split scraper-service).
         print(f"[Worker] Failed to start historical CSV import workflow: {e}")
+
+    if scraper_cfg.research_backfill_enabled and scraper_cfg.research_backfill_on_startup:
+        # Builds the research datasets on first deploy and resumes an
+        # interrupted backfill after a restart. Cheap when already up to
+        # date: the per-equity refresh is skipped if done in the last 6
+        # days and intraday walks resume from research_backfill_state.
+        try:
+            await client.start_workflow(
+                ResearchHistoryBackfillWorkflow.run,
+                False,
+                id=_RESEARCH_BACKFILL_STARTUP_ID,
+                task_queue=_GENERAL_QUEUE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            )
+        except Exception as e:
+            # Most likely still running from before the restart -- fine.
+            print(f"[Worker] Research history backfill not started: {e}")
+        try:
+            await client.start_workflow(
+                FloorSheetHistoryBackfillWorkflow.run,
+                id=_FLOOR_SHEET_HISTORY_STARTUP_ID,
+                task_queue=_GENERAL_QUEUE,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+            )
+        except Exception as e:
+            print(f"[Worker] Floor-sheet history backfill not started: {e}")
 
     await worker.run()
 

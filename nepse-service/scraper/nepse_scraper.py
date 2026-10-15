@@ -2,8 +2,11 @@
 NEPSE index scraper.
 
 Source order:
-  1) nepsetrading.com/market/sectors (primary)
-  2) merolagani.com (fallback)
+  1) nepalstock.com.np official API (primary): all 17 indices -- NEPSE,
+     Sensitive, Float, Sensitive Float and the 13 sector sub-indices
+     (incl. Others and Mutual Fund, which nepsetrading doesn't list).
+  2) nepsetrading.com/market/sectors (fallback, NEPSE + 11 sectors)
+  3) merolagani.com (last-resort fallback)
 """
 from __future__ import annotations
 
@@ -13,10 +16,13 @@ from typing import Any
 
 import requests
 
+from nepse_common.constants.index_registry import INDEX_BY_OFFICIAL_ID
+
 from scraper.merolagani_scraper import (
     scrape_merolagani_main_index,
     scrape_merolagani_sector_indices,
 )
+from scraper.nepse_market_data import fetch_official_indices
 
 _HEADERS = {
     "User-Agent": (
@@ -185,8 +191,59 @@ def scrape_sector_indices(timeout: int = 15) -> list[dict[str, Any]]:
     return scrape_merolagani_sector_indices(timeout)
 
 
+def _scrape_official_indices(timeout: int = 15) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """(main NEPSE point, other 16 index points) from nepalstock.com.np, in
+    the same point shape the nepsetrading/merolagani builders return."""
+    try:
+        rows = fetch_official_indices(timeout)
+    except Exception as e:
+        print(f"[NEPSE Scraper] nepalstock official index fetch failed: {e}")
+        return None, []
+
+    scraped_at = datetime.now().isoformat()
+    main: dict[str, Any] | None = None
+    others: list[dict[str, Any]] = []
+    for row in rows:
+        spec = INDEX_BY_OFFICIAL_ID.get(row.get("id"))
+        current = _to_float(row.get("currentValue"))
+        if spec is None or current is None:
+            continue
+
+        change = _to_float(row.get("change"))
+        previous = _to_float(row.get("previousClose"))
+        if previous is None and change is not None:
+            previous = current - change
+        # Derived from change/previous for the same reason as the
+        # nepsetrading builders below; perChange is rounded to 2 dp.
+        pct = (change / previous) * 100.0 if previous not in (None, 0) and change is not None else _to_float(row.get("perChange"))
+
+        point = {
+            "index": spec.name,
+            "value": current,
+            "change": change,
+            "percent_change": pct,
+            "scraped_at": scraped_at,
+        }
+        if spec.name == "NEPSE":
+            main = point
+        else:
+            others.append(point)
+    return main, others
+
+
 def scrape_all_nepse_data(timeout: int = 15) -> dict[str, Any]:
-    """Scrape both NEPSE main index and selected sector indices."""
+    """Scrape the NEPSE main index and the other indices: official API
+    first, the nepsetrading/merolagani chain if it fails."""
+    main_index, sector_indices = _scrape_official_indices(timeout)
+    if main_index is not None and sector_indices:
+        return {
+            "scraped_at": datetime.now().isoformat(),
+            "source": "nepalstock",
+            "source_used": "nepalstock_official",
+            "nepse_index": main_index,
+            "sector_indices": sector_indices,
+        }
+
     source_used = "nepsetrading_primary"
 
     rows = _fetch_nepsetrading_rows(timeout)

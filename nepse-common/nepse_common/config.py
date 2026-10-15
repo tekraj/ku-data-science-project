@@ -39,6 +39,32 @@ class ScraperConfig:
     historical_nepse_csv_dir: str
     historical_news_backfill_enabled: bool
     nepse_news_fields_backfill_enabled: bool
+    # nepse-service market-depth rotation: only the top-N most liquid
+    # securities (by latest daily turnover) are walked, MARKET_DEPTH_BATCH_SIZE
+    # per 1-minute tick, so each one is refreshed every ceil(N / batch)
+    # minutes instead of every ~26 minutes across all ~650 listed securities.
+    # 0 = walk every listed security.
+    market_depth_top_n: int
+    market_depth_batch_size: int
+    # Research datasets (nepse-service ResearchHistoryBackfillWorkflow /
+    # NepseEndOfDayWorkflow): long daily OHLCV history for every index and
+    # equity plus 1-minute index bars, sourced from merolagani.com's chart
+    # handler (the official nepalstock.com.np API only serves ~1 year).
+    # Intraday = ~1-minute index ticks (nepse_intraday_tick) back to
+    # intraday_backfill_start_date.
+    research_backfill_enabled: bool
+    research_backfill_on_startup: bool
+    intraday_backfill_start_date: str
+    intraday_backfill_indices: bool
+    # "" = no per-stock intraday ticks, "ALL" = every active equity, or a
+    # comma-separated symbol list (e.g. "NABIL,NICA,UPPER").
+    intraday_backfill_stocks: str
+    merolagani_request_pause_seconds: float
+    # First session FloorSheetHistoryBackfillWorkflow completes (broker ids
+    # + missed trades) from merolagani's floor-sheet history. Defaults to
+    # the start of this project's own floor-sheet collection; merolagani has
+    # data back to ~2020 (2020+ is ~100M trades, ~25-30 GB, ~8-9 days).
+    floorsheet_backfill_start_date: str
 
 
 @dataclass(frozen=True)
@@ -114,6 +140,17 @@ def load_app_config() -> AppConfig:
             nepse_news_fields_backfill_enabled=_env_bool(
                 "NEPSE_NEWS_FIELDS_BACKFILL_ENABLED", False
             ),
+            market_depth_top_n=int(os.getenv("MARKET_DEPTH_TOP_N", "50")),
+            market_depth_batch_size=int(os.getenv("MARKET_DEPTH_BATCH_SIZE", "25")),
+            research_backfill_enabled=_env_bool("RESEARCH_BACKFILL_ENABLED", True),
+            research_backfill_on_startup=_env_bool("RESEARCH_BACKFILL_ON_STARTUP", True),
+            intraday_backfill_start_date=os.getenv("INTRADAY_BACKFILL_START_DATE", "2018-01-01"),
+            intraday_backfill_indices=_env_bool("INTRADAY_BACKFILL_INDICES", True),
+            intraday_backfill_stocks=os.getenv("INTRADAY_BACKFILL_STOCKS", ""),
+            merolagani_request_pause_seconds=float(
+                os.getenv("MEROLAGANI_REQUEST_PAUSE_SECONDS", "2")
+            ),
+            floorsheet_backfill_start_date=os.getenv("FLOORSHEET_BACKFILL_START_DATE", "2026-09-15"),
         ),
         auth=_load_auth_config(),
     )

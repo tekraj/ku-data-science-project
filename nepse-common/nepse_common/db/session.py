@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import Iterator
 
 from sqlalchemy import Engine, create_engine
@@ -16,8 +17,12 @@ def _build_url(db_config: DatabaseConfig) -> str:
     )
 
 
+@lru_cache(maxsize=None)
 def get_engine(db_config: DatabaseConfig) -> Engine:
-    return create_engine(_build_url(db_config))
+    """One pooled engine per DatabaseConfig (a frozen, hashable dataclass)
+    per process, instead of a fresh engine + connection pool on every
+    session_scope() call."""
+    return create_engine(_build_url(db_config), pool_pre_ping=True)
 
 
 def get_sessionmaker(db_config: DatabaseConfig) -> sessionmaker[Session]:
