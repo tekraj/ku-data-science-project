@@ -21,6 +21,15 @@ _RETRY = RetryPolicy(maximum_attempts=3, initial_interval=timedelta(minutes=1))
 # small (a deep backfill from 2020 is ~1,500 sessions).
 _DAYS_PER_RUN = 100
 
+# Every listed date is a real NEPSE session, so a run of "no data" answers
+# means merolagani is degraded, not empty: on 2026-10-17/18 it answered
+# every 2021-2022 search with an empty page for ~36 h and the walk skipped
+# ~540 sessions in a row. After this many in a row, pause and retry the
+# current session before moving on.
+_NO_DATA_STREAK_PAUSE_AFTER = 5
+_NO_DATA_PAUSE = timedelta(minutes=30)
+_NO_DATA_PAUSES_PER_SESSION = 4
+
 
 @workflow.defn
 class FloorSheetHistoryBackfillWorkflow:
@@ -28,16 +37,26 @@ class FloorSheetHistoryBackfillWorkflow:
     floor-sheet history (see scraper/merolagani_floorsheet.py): broker ids
     on every trade plus the trades the intraday scrape missed. Covers every
     NEPSE session from `start_date` (default FLOORSHEET_BACKFILL_START_DATE)
-    to yesterday -- today belongs to the post-close NEPSE sweep. Days that
-    are already complete cost one request. Runs weekly (Sunday) and on worker
-    startup, so a missed evening sweep heals itself within a week."""
+    to yesterday -- today belongs to the post-close NEPSE sweep. Days already
+    filled cost nothing. Two entry points:
+      - worker startup: the full range (the deep walk; with a 2020 start it
+        runs for weeks and simply resumes after a restart, since the startup
+        id is reused only once the previous run has closed);
+      - weekly schedule (Sunday): lookback_days=30, a safety net so a missed
+        evening sweep heals within a week without starting a second deep
+        walk alongside the startup one."""
 
     @workflow.run
-    async def run(self, start_date: str | None = None, end_date: str | None = None) -> dict[str, Any]:
+    async def run(
+        self, start_date: str | None = None, end_date: str | None = None, lookback_days: int | None = None
+    ) -> dict[str, Any]:
         cfg = load_app_config().scraper
         started_at = workflow.now()
+        yesterday = workflow.now().astimezone(NPT).date() - timedelta(days=1)
+        if lookback_days:
+            start_date = max(cfg.floorsheet_backfill_start_date, (yesterday - timedelta(days=lookback_days)).isoformat())
         start_date = start_date or cfg.floorsheet_backfill_start_date
-        end_date = end_date or (workflow.now().astimezone(NPT).date() - timedelta(days=1)).isoformat()
+        end_date = end_date or yesterday.isoformat()
 
         days = await workflow.execute_activity(
             list_trading_days_activity,
@@ -50,20 +69,31 @@ class FloorSheetHistoryBackfillWorkflow:
         counts = {"filled": 0, "complete": 0, "no data": 0}
         inserted = updated = 0
         failed: list[str] = []
+        no_data_streak = 0
+        pause_on_streak = workflow.patched("floorsheet-no-data-streak-pause")
         for i, day in enumerate(batch):
             if i:
                 await workflow.sleep(timedelta(seconds=cfg.merolagani_request_pause_seconds))
             try:
-                result = await workflow.execute_activity(
-                    backfill_floor_sheet_day_activity,
-                    args=[day, 60, cfg.merolagani_request_pause_seconds],
-                    start_to_close_timeout=timedelta(hours=2),
-                    heartbeat_timeout=timedelta(minutes=5),
-                    retry_policy=_RETRY,
-                )
+                for pause in range(_NO_DATA_PAUSES_PER_SESSION + 1):
+                    result = await workflow.execute_activity(
+                        backfill_floor_sheet_day_activity,
+                        args=[day, 120, cfg.merolagani_request_pause_seconds],
+                        # Old sessions take 10-30 s per page on merolagani's side;
+                        # the busiest (2021-08-18) has 377 pages. Retries resume
+                        # from the last heartbeated page.
+                        start_to_close_timeout=timedelta(hours=8),
+                        heartbeat_timeout=timedelta(minutes=10),
+                        retry_policy=_RETRY,
+                    )
+                    degraded = result["status"] == "no data" and no_data_streak + 1 >= _NO_DATA_STREAK_PAUSE_AFTER
+                    if not (pause_on_streak and degraded) or pause == _NO_DATA_PAUSES_PER_SESSION:
+                        break
+                    await workflow.sleep(_NO_DATA_PAUSE)
             except Exception:  # noqa: BLE001 - one day must not sink the rest
                 failed.append(day)
                 continue
+            no_data_streak = no_data_streak + 1 if result["status"] == "no data" else 0
             counts[result["status"]] = counts.get(result["status"], 0) + 1
             inserted += int(result.get("inserted", 0) or 0)
             updated += int(result.get("updated", 0) or 0)

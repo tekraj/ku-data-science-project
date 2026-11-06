@@ -4,6 +4,7 @@ import { apiRequest } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { AppShell } from "../components/AppShell";
 import { TopBar } from "../components/TopBar";
+import { NavLinks } from "../components/NavLinks";
 
 // TIER_COLORS/CATEGORY_COLORS/categoryClass live here (not lib/format.ts) since
 // NewsPage is their only consumer.
@@ -116,13 +117,7 @@ export function NewsPage() {
       actions={
         <TopBar
           onLogout={onLogout}
-          rightLink={
-            <>
-              <Link className="btn-ghost" to="/">Dashboard</Link>
-              <Link className="btn-ghost" to="/technicals">Technicals</Link>
-              <Link className="btn-ghost" to="/logs">Run Logs</Link>
-            </>
-          }
+          rightLink={<NavLinks />}
         />
       }
     >

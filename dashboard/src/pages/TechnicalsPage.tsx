@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Area,
   Bar,
@@ -16,24 +16,30 @@ import {
   YAxis,
 } from "recharts";
 import { apiRequest } from "../lib/api";
-import { formatNumber } from "../lib/format";
 import { AppShell } from "../components/AppShell";
 import { TopBar } from "../components/TopBar";
+import { NavLinks } from "../components/NavLinks";
+import { AXIS, GRID, TOOLTIP } from "../lib/chart";
+import { axisDay, formatDay, formatNumber } from "../lib/format";
 
+// Calendar-day windows over the official daily closes (nepse_index_daily:
+// NEPSE back to 2000, most sub-indices to 2014-2016); 0 = full history.
+// Indicators are computed over the full history server-side, so even a
+// short window starts with a warmed-up SMA 200.
 const WINDOW_OPTIONS = [
   { value: 90, label: "90d" },
   { value: 180, label: "180d" },
   { value: 365, label: "1y" },
   { value: 730, label: "2y" },
+  { value: 1825, label: "5y" },
+  { value: 3650, label: "10y" },
+  { value: 0, label: "Max" },
 ];
 
-// The backend returns plain "YYYY-MM-DD" strings for point dates (not full
-// timestamps), so we use them directly as the tooltip/axis label instead of
-// piping through formatDate — formatDate applies the Asia/Kathmandu timezone
-// offset to a Date parsed from the string, which (being UTC midnight) would
-// roll over to the next calendar day and misrepresent the point's date.
+// Point dates are plain "YYYY-MM-DD" (see formatDay for why they're never
+// parsed as UTC midnight).
 function formatPointDate(dateString) {
-  return dateString || "-";
+  return formatDay(dateString);
 }
 
 export function TechnicalsPage() {
@@ -124,17 +130,11 @@ export function TechnicalsPage() {
   return (
     <AppShell
       title="Technical Analysis"
-      subtitle="SMA, EMA, MACD, RSI and Bollinger Band indicators derived from daily closing values"
+      subtitle="SMA, EMA, MACD, RSI and Bollinger Band indicators over the official daily closes"
       actions={
         <TopBar
           onLogout={onLogout}
-          rightLink={
-            <>
-              <Link className="btn-ghost" to="/">Dashboard</Link>
-              <Link className="btn-ghost" to="/news">News</Link>
-              <Link className="btn-ghost" to="/logs">Run Logs</Link>
-            </>
-          }
+          rightLink={<NavLinks />}
         />
       }
     >
@@ -158,7 +158,7 @@ export function TechnicalsPage() {
             ) : (
               indices.map((idx) => (
                 <option key={idx.index_name} value={idx.index_name}>
-                  {idx.index_name} ({idx.distinct_days}d)
+                  {idx.index_name} ({formatNumber(idx.distinct_days, 0)} sessions since {idx.first_date?.slice(0, 4)})
                 </option>
               ))
             )}
@@ -190,7 +190,7 @@ export function TechnicalsPage() {
 
       {!loading && daysAvailable !== null && daysAvailable < 200 && (
         <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
-          Only {daysAvailable} days of history available for {indexName} — the 200-day moving average will not render until more data accumulates.
+          Only {daysAvailable} sessions of history for {indexName} — the 200-session moving average needs 200.
         </div>
       )}
 
@@ -198,7 +198,7 @@ export function TechnicalsPage() {
       <section className="panel mb-4">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="font-display text-xl font-semibold">Price &amp; Moving Averages</h3>
-          <span className="text-xs text-slate-400">SMA 20 / 50 / 200</span>
+          <span className="text-xs text-slate-400">SMA 20 / 50 / 200 sessions</span>
         </div>
         <div className="h-96">
           <ResponsiveContainer width="100%" height="100%">
@@ -209,15 +209,15 @@ export function TechnicalsPage() {
                   <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-              <XAxis dataKey="date" minTickGap={28} stroke="#94a3b8" />
-              <YAxis domain={["auto", "auto"]} stroke="#94a3b8" />
-              <Tooltip labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="date" tickFormatter={(v) => axisDay(v, days === 0 || days > 400)} minTickGap={36} stroke={AXIS} />
+              <YAxis domain={["auto", "auto"]} stroke={AXIS} />
+              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
               <Legend />
-              <Area type="monotone" dataKey="close" name="Close" stroke="#2dd4bf" fill="url(#closeFill)" strokeWidth={2.5} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="sma_20" name="SMA 20" stroke="#fbbf24" strokeWidth={1.75} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="sma_50" name="SMA 50" stroke="#60a5fa" strokeWidth={1.75} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="sma_200" name="SMA 200" stroke="#c4b5fd" strokeWidth={1.75} dot={false} connectNulls={false} />
+              <Area type="monotone" dataKey="close" name="Close" stroke="#2dd4bf" fill="url(#closeFill)" strokeWidth={2.5} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="sma_20" name="SMA 20" stroke="#fbbf24" strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="sma_50" name="SMA 50" stroke="#60a5fa" strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="sma_200" name="SMA 200" stroke="#c4b5fd" strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -232,10 +232,10 @@ export function TechnicalsPage() {
         <div className="h-96">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={points}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-              <XAxis dataKey="date" minTickGap={28} stroke="#94a3b8" />
-              <YAxis domain={["auto", "auto"]} stroke="#94a3b8" />
-              <Tooltip labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="date" tickFormatter={(v) => axisDay(v, days === 0 || days > 400)} minTickGap={36} stroke={AXIS} />
+              <YAxis domain={["auto", "auto"]} stroke={AXIS} />
+              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
               <Legend />
               {/* Band fill: Recharts has no first-class "area between two lines" mark,
                   and stacking two Areas to fake one (upper fill, then lower painted
@@ -243,10 +243,10 @@ export function TechnicalsPage() {
                   autoscales per panel or the panel isn't opaque, producing a
                   misleading shape. Three plain Lines (dashed upper/lower, solid
                   middle) is the simpler, honest rendering used here instead. */}
-              <Line type="monotone" dataKey="close" name="Close" stroke="#2dd4bf" strokeWidth={2} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="bollinger_upper" name="Upper" stroke="#818cf8" strokeWidth={1.25} strokeDasharray="4 3" dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="bollinger_middle" name="Middle (SMA 20)" stroke="#fbbf24" strokeWidth={1.25} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="bollinger_lower" name="Lower" stroke="#818cf8" strokeWidth={1.25} strokeDasharray="4 3" dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="close" name="Close" stroke="#2dd4bf" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="bollinger_upper" name="Upper" stroke="#818cf8" strokeWidth={1.25} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="bollinger_middle" name="Middle (SMA 20)" stroke="#fbbf24" strokeWidth={1.25} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="bollinger_lower" name="Lower" stroke="#818cf8" strokeWidth={1.25} strokeDasharray="4 3" dot={false} connectNulls={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -261,18 +261,18 @@ export function TechnicalsPage() {
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={points}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-              <XAxis dataKey="date" minTickGap={28} stroke="#94a3b8" />
-              <YAxis domain={["auto", "auto"]} stroke="#94a3b8" />
-              <Tooltip labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 3), name]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="date" tickFormatter={(v) => axisDay(v, days === 0 || days > 400)} minTickGap={36} stroke={AXIS} />
+              <YAxis domain={["auto", "auto"]} stroke={AXIS} />
+              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 3), name]} />
               <Legend />
-              <Bar dataKey="macd_histogram" name="Histogram">
+              <Bar dataKey="macd_histogram" name="Histogram" fill="#94a3b8" isAnimationActive={false}>
                 {points.map((p, idx) => (
                   <Cell key={idx} fill={Number(p.macd_histogram) >= 0 ? "#34d399" : "#f87171"} />
                 ))}
               </Bar>
-              <Line type="monotone" dataKey="macd" name="MACD" stroke="#60a5fa" strokeWidth={1.75} dot={false} connectNulls={false} />
-              <Line type="monotone" dataKey="macd_signal" name="Signal" stroke="#fbbf24" strokeWidth={1.75} dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="macd" name="MACD" stroke="#60a5fa" strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="macd_signal" name="Signal" stroke="#fbbf24" strokeWidth={1.75} dot={false} connectNulls={false} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -287,13 +287,13 @@ export function TechnicalsPage() {
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={points}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-              <XAxis dataKey="date" minTickGap={28} stroke="#94a3b8" />
-              <YAxis domain={[0, 100]} stroke="#94a3b8" />
-              <Tooltip labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="date" tickFormatter={(v) => axisDay(v, days === 0 || days > 400)} minTickGap={36} stroke={AXIS} />
+              <YAxis domain={[0, 100]} stroke={AXIS} />
+              <Tooltip {...TOOLTIP} labelFormatter={(v) => formatPointDate(v)} formatter={(v, name) => [formatNumber(v, 2), name]} />
               <ReferenceLine y={70} stroke="#f87171" strokeDasharray="4 3" label={{ value: "Overbought", position: "insideTopRight", fill: "#f87171", fontSize: 11 }} />
               <ReferenceLine y={30} stroke="#34d399" strokeDasharray="4 3" label={{ value: "Oversold", position: "insideBottomRight", fill: "#34d399", fontSize: 11 }} />
-              <Line type="monotone" dataKey="rsi_14" name="RSI 14" stroke="#c4b5fd" strokeWidth={2} dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="rsi_14" name="RSI 14" stroke="#c4b5fd" strokeWidth={2} dot={false} connectNulls={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>

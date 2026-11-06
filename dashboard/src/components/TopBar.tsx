@@ -1,4 +1,4 @@
-export function TopBar({ hours, setHours, onLogout, rightLink }) {
+export function TopBar({ onLogout, rightLink = null, hours = undefined, setHours = undefined }) {
   return (
     <>
       {setHours ? (

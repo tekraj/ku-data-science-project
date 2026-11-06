@@ -23,9 +23,13 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
-
-from scraper.nepse_wasm_auth import ROOT_URL, auth_headers, build_payload_id, fetch_auth_context
+from scraper.nepse_wasm_auth import (
+    ROOT_URL,
+    auth_headers,
+    build_payload_id,
+    fetch_auth_context,
+    nepse_request,
+)
 
 _TODAY_PRICE_PATH = "/api/nots/nepse-data/today-price"
 _SECTORWISE_SUMMARY_PATH = "/api/nots/sectorwise"
@@ -47,12 +51,12 @@ def _get_json(
     auth_context: dict[str, Any] | None = None,
 ) -> Any:
     auth_context = auth_context or fetch_auth_context(timeout)
-    resp = requests.get(
+    resp = nepse_request(
+        "GET",
         ROOT_URL + path,
         headers=auth_headers(auth_context),
         params=params,
         timeout=timeout,
-        verify=False,  # NEPSE's cert chain is incomplete -- see nepse_wasm_auth.py.
     )
     resp.raise_for_status()
     return resp.json()
@@ -63,13 +67,13 @@ def _post_json(
 ) -> Any:
     auth_context = fetch_auth_context(timeout)
     payload_id = build_payload_id(auth_context, which=which_payload)
-    resp = requests.post(
+    resp = nepse_request(
+        "POST",
         ROOT_URL + path,
         headers=auth_headers(auth_context),
         params=params,
         json={"id": payload_id},
         timeout=timeout,
-        verify=False,
     )
     resp.raise_for_status()
     return resp.json()
@@ -196,13 +200,13 @@ class FloorSheetPager:
         """(total_pages, total_trades, rows) for one page."""
         params = {"page": str(page), "size": str(_PAGE_SIZE), "sort": "contractId,desc"}
         for attempt in range(2):
-            resp = requests.post(
+            resp = nepse_request(
+                "POST",
                 ROOT_URL + _FLOOR_SHEET_PATH,
                 headers=auth_headers(self._auth_context),
                 params=params,
                 json={"id": self._payload_id},
                 timeout=self._timeout,
-                verify=False,
             )
             if resp.status_code in (401, 403) and attempt == 0:
                 self._auth_context, self._payload_id = self._new_auth()

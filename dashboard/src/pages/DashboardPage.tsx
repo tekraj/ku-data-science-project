@@ -18,9 +18,11 @@ import {
   YAxis,
 } from "recharts";
 import { apiRequest } from "../lib/api";
-import { formatDate, formatNumber, shortTime, trendColor } from "../lib/format";
+import { axisDay, formatDate, formatDay, formatNumber, shortDateTime, shortTime, timeAgo, trendColor } from "../lib/format";
+import { AXIS, GRID, TOOLTIP } from "../lib/chart";
 import { AppShell } from "../components/AppShell";
 import { TopBar } from "../components/TopBar";
+import { NavLinks } from "../components/NavLinks";
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -28,6 +30,7 @@ export function DashboardPage() {
   const [overview, setOverview] = useState(null);
   const [news, setNews] = useState([]);
   const [mainHistory, setMainHistory] = useState([]);
+  const [granularity, setGranularity] = useState("tick");
   const [sectorHistory, setSectorHistory] = useState({});
   const [activeSector, setActiveSector] = useState("");
   const [loading, setLoading] = useState(true);
@@ -52,6 +55,7 @@ export function DashboardPage() {
         setOverview(overviewData);
         setNews(newsData.news || []);
         setMainHistory(historyData.points || []);
+        setGranularity(historyData.granularity || "tick");
         setSectorHistory(sectorData.series || {});
 
         const keys = Object.keys(sectorData.series || {});
@@ -104,6 +108,8 @@ export function DashboardPage() {
     [stats.finance_count, stats.general_count],
   );
 
+  // Every sub-index, strongest to weakest (it used to take the first 10
+  // alphabetically while claiming "top 10").
   const sectorMomentum = useMemo(
     () =>
       sectorSnapshot
@@ -111,9 +117,18 @@ export function DashboardPage() {
           name: item.index,
           percent: Number(item.percent_change || 0),
         }))
-        .slice(0, 10),
+        .sort((a, b) => b.percent - a.percent),
     [sectorSnapshot],
   );
+
+  // Axis/tooltip labels by what the API sent: 1-minute ticks (one
+  // session), thinned ticks (several sessions) or daily closes.
+  const multiSession = hours > 24;
+  const longSpan = hours > 24 * 400;
+  const tickFormatter = granularity === "daily" ? (v) => axisDay(v, longSpan) : multiSession ? shortDateTime : shortTime;
+  const labelFormatter = granularity === "daily" ? (v) => formatDay(v) : (v) => formatDate(v);
+  const granularityNote =
+    granularity === "daily" ? "official daily closes" : multiSession ? "10-minute ticks" : "1-minute ticks";
 
   return (
     <AppShell
@@ -124,13 +139,7 @@ export function DashboardPage() {
           hours={hours}
           setHours={setHours}
           onLogout={onLogout}
-          rightLink={
-            <>
-              <Link className="btn-ghost" to="/news">News</Link>
-              <Link className="btn-ghost" to="/technicals">Technicals</Link>
-              <Link className="btn-ghost" to="/logs">Run Logs</Link>
-            </>
-          }
+          rightLink={<NavLinks />}
         />
       }
     >
@@ -142,6 +151,14 @@ export function DashboardPage() {
           <p className="mt-2 font-display text-3xl font-bold text-slate-100">{loading ? "..." : formatNumber(latestNepse.value, 2)}</p>
           <p className={`mt-1 text-sm ${trendColor(Number(latestNepse.change || 0))}`}>
             {loading ? "..." : `${formatNumber(latestNepse.change, 2)} (${formatNumber(latestNepse.percent_change, 2)}%)`}
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            {latestNepse.live ? (
+              <span className="text-emerald-300">● live · {shortTime(latestNepse.scraped_at)} NPT</span>
+            ) : (
+              `close of ${formatDay(latestNepse.scraped_at)}`
+            )}{" "}
+            · vs previous session
           </p>
         </article>
         <article className="metric-card">
@@ -157,8 +174,9 @@ export function DashboardPage() {
           <p className="mt-1 text-sm text-slate-300">Finance / General</p>
         </article>
         <article className="metric-card">
-          <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Last Scrape</p>
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Last News Scrape</p>
           <p className="mt-2 text-lg font-semibold text-slate-100">{loading ? "..." : formatDate(stats.last_scraped_at)}</p>
+          <p className="mt-1 text-sm text-slate-300">{loading ? "" : timeAgo(stats.last_scraped_at)}</p>
         </article>
       </section>
 
@@ -166,7 +184,7 @@ export function DashboardPage() {
         <article className="panel">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="font-display text-xl font-semibold">Main Index Trend</h3>
-            <span className="text-xs text-slate-400">{mainHistory.length} points</span>
+            <span className="text-xs text-slate-400">{mainHistory.length} points · {granularityNote}</span>
           </div>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -177,11 +195,11 @@ export function DashboardPage() {
                     <stop offset="95%" stopColor="#2dd4bf" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-                <XAxis dataKey="scraped_at" tickFormatter={shortTime} minTickGap={28} stroke="#94a3b8" />
-                <YAxis domain={["auto", "auto"]} stroke="#94a3b8" />
-                <Tooltip labelFormatter={(v) => formatDate(v)} formatter={(v) => [formatNumber(v, 2), "NEPSE"]} />
-                <Area type="monotone" dataKey="value" stroke="#2dd4bf" fill="url(#nepseFill)" strokeWidth={2.5} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis dataKey="scraped_at" tickFormatter={tickFormatter} minTickGap={36} stroke={AXIS} />
+                <YAxis domain={["auto", "auto"]} stroke={AXIS} width={60} />
+                <Tooltip {...TOOLTIP} labelFormatter={labelFormatter} formatter={(v) => [formatNumber(v, 2), "NEPSE"]} />
+                <Area type="monotone" dataKey="value" stroke="#2dd4bf" fill="url(#nepseFill)" strokeWidth={2.5} dot={false} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -195,7 +213,7 @@ export function DashboardPage() {
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Tooltip formatter={(v) => formatNumber(v, 0)} />
+                <Tooltip {...TOOLTIP} formatter={(v) => formatNumber(v, 0)} />
                 <Legend />
                 <Pie data={newsMix} dataKey="value" nameKey="name" innerRadius={58} outerRadius={96}>
                   {newsMix.map((entry, idx) => (
@@ -211,8 +229,8 @@ export function DashboardPage() {
       <section className="mt-4 grid gap-3 xl:grid-cols-[1.55fr_1fr]">
         <article className="panel">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-display text-xl font-semibold">Sub-Indices (Tabs)</h3>
-            <span className="text-xs text-slate-400">{sectorTabs.length} sectors</span>
+            <h3 className="font-display text-xl font-semibold">Sub-Indices</h3>
+            <span className="text-xs text-slate-400">{sectorTabs.length} indices · {granularityNote}</span>
           </div>
 
           <div className="mb-3 flex flex-wrap gap-2">
@@ -233,14 +251,14 @@ export function DashboardPage() {
             {sectorTabs.length === 0 ? <span className="text-sm text-slate-400">No sector data yet.</span> : null}
           </div>
 
-          <div className="h-80">
+          <div className="h-[18.5rem]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={activeSectorSeries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-                <XAxis dataKey="scraped_at" tickFormatter={shortTime} minTickGap={28} stroke="#94a3b8" />
-                <YAxis domain={["auto", "auto"]} stroke="#94a3b8" />
-                <Tooltip labelFormatter={(v) => formatDate(v)} formatter={(v) => [formatNumber(v, 2), activeSector || "Sector"]} />
-                <Line type="monotone" dataKey="value" stroke="#60a5fa" strokeWidth={2.5} dot={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis dataKey="scraped_at" tickFormatter={tickFormatter} minTickGap={36} stroke={AXIS} />
+                <YAxis domain={["auto", "auto"]} stroke={AXIS} width={60} />
+                <Tooltip {...TOOLTIP} labelFormatter={labelFormatter} formatter={(v) => [formatNumber(v, 2), activeSector || "Sector"]} />
+                <Line type="monotone" dataKey="value" stroke="#60a5fa" strokeWidth={2.5} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -249,15 +267,15 @@ export function DashboardPage() {
         <article className="panel">
           <div className="mb-2 flex items-center justify-between">
             <h3 className="font-display text-xl font-semibold">Sector Momentum</h3>
-            <span className="text-xs text-slate-400">top 10 latest % change</span>
+            <span className="text-xs text-slate-400">% change vs previous session close</span>
           </div>
-          <div className="h-80">
+          <div className="h-[26rem]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sectorMomentum} layout="vertical" margin={{ left: 10, right: 14 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-                <XAxis type="number" stroke="#94a3b8" />
-                <YAxis dataKey="name" type="category" width={95} stroke="#94a3b8" />
-                <Tooltip formatter={(v) => [`${formatNumber(v, 2)}%`, "Change"]} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis type="number" stroke={AXIS} tickFormatter={(v) => `${v}%`} />
+                <YAxis dataKey="name" type="category" width={150} stroke={AXIS} tick={{ fontSize: 11 }} interval={0} />
+                <Tooltip {...TOOLTIP} formatter={(v) => [`${formatNumber(v, 2)}%`, "Change"]} />
                 <Bar dataKey="percent" radius={[0, 8, 8, 0]}>
                   {sectorMomentum.map((item) => (
                     <Cell key={item.name} fill={item.percent >= 0 ? "#34d399" : "#f87171"} />
@@ -277,11 +295,11 @@ export function DashboardPage() {
           </div>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={topSources}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, .2)" />
-                <XAxis dataKey="source" interval={0} angle={-15} textAnchor="end" height={58} stroke="#94a3b8" />
-                <YAxis stroke="#94a3b8" />
-                <Tooltip formatter={(v) => [formatNumber(v, 0), "Articles"]} />
+              <BarChart data={topSources} margin={{ left: 24, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+                <XAxis dataKey="source" interval={0} angle={-15} textAnchor="end" height={58} stroke={AXIS} />
+                <YAxis stroke={AXIS} />
+                <Tooltip {...TOOLTIP} formatter={(v) => [formatNumber(v, 0), "Articles"]} />
                 <Bar dataKey="item_count" fill="#f59e0b" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

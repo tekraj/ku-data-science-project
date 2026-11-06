@@ -44,6 +44,7 @@ carry over to requests against other sites in this codebase.
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime
 from importlib import resources
 from typing import Any
@@ -63,6 +64,28 @@ _HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
     "Referer": "https://www.nepalstock.com.np/",
 }
+
+# nepalstock.com.np drops connections ("Remote end closed connection without
+# response") in bursts, mostly in the first second or two of each minute when
+# every client polls at once -- on 2026-11-04 it cost 172 of ~250 market-depth
+# ticks and ~95% of official index ticks. Such a request is retried after a
+# short pause; read timeouts aren't (they'd multiply the wait).
+_CONNECTION_RETRY_PAUSES = (1.5, 3.0)
+
+
+def nepse_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """requests.request(method, url, verify=False, **kwargs), retried on
+    dropped/refused connections."""
+    for pause in (*_CONNECTION_RETRY_PAUSES, None):
+        try:
+            # NEPSE's cert chain is incomplete -- see module docstring.
+            return requests.request(method, url, verify=False, **kwargs)
+        except requests.ConnectionError as e:
+            if pause is None or isinstance(e, requests.ConnectTimeout):
+                raise
+            time.sleep(pause)
+    raise AssertionError("unreachable")
+
 
 # Same dummy-data lookup table as the upstream nepse-scraper package --
 # this is NOT tunable/configurable data, it is a fixed constant baked into
@@ -147,11 +170,11 @@ def fetch_auth_context(timeout: int) -> dict[str, Any]:
     safely cache against -- re-deriving fresh each time trades a bit of
     redundant latency for correctness certainty.
     """
-    resp = requests.get(
+    resp = nepse_request(
+        "GET",
         ROOT_URL + "/api/authenticate/prove",
         headers=_HEADERS,
         timeout=timeout,
-        verify=False,  # NEPSE's cert chain is incomplete -- see module docstring.
     )
     resp.raise_for_status()
     token_response = resp.json()
@@ -178,11 +201,11 @@ def build_payload_id(auth_context: dict[str, Any], which: str | None = None) -> 
     access_token = auth_context["access_token"]
 
     headers = {"Authorization": f"Salter {access_token}", **_HEADERS}
-    resp = requests.get(
+    resp = nepse_request(
+        "GET",
         ROOT_URL + "/api/nots/nepse-data/market-open",
         headers=headers,
         timeout=15,
-        verify=False,
     )
     resp.raise_for_status()
     given_id = resp.json()["id"]

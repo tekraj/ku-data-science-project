@@ -63,7 +63,8 @@ class ScraperConfig:
     # First session FloorSheetHistoryBackfillWorkflow completes (broker ids
     # + missed trades) from merolagani's floor-sheet history. Defaults to
     # the start of this project's own floor-sheet collection; merolagani has
-    # data back to ~2020 (2020+ is ~100M trades, ~25-30 GB, ~8-9 days).
+    # data back to ~2020 (2020+ is ~100M trades, ~25-30 GB, ~1 month of
+    # requests: merolagani serves old dates at 10-30 s per page).
     floorsheet_backfill_start_date: str
 
 

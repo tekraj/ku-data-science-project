@@ -24,7 +24,7 @@ _RETRY = RetryPolicy(maximum_attempts=3, initial_interval=timedelta(seconds=30))
 
 @workflow.defn
 class NepseEndOfDayWorkflow:
-    """After the close (Mon-Fri, see register_schedules.py), extend the
+    """After the close (every Sun-Fri, see register_schedules.py), extend the
     research datasets by today's session:
       1. official daily bar for every traded equity -> nepse_stock_daily
          (skips the rest on a holiday);

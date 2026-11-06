@@ -90,7 +90,12 @@ def _npt_calendar(hour: int, minute: int, days_of_week: list[int]) -> ScheduleCa
     )
 
 
-_WEEKDAYS = [1, 2, 3, 4, 5]  # Mon-Fri, NEPSE's trading week since April 2026
+# Post-close jobs fire Sunday-Friday: NEPSE traded Sun-Thu until 2026-04-05
+# and Mon-Fri since 2026-04-06 (extra Friday sessions in mid-2022 too), so
+# covering every day that has ever been a session keeps them working if
+# the week changes again. On a day without a session both jobs see a
+# businessDate that isn't today and skip.
+_SESSION_DAYS = [0, 1, 2, 3, 4, 5]  # Sun-Fri; Saturday is never a session
 _SATURDAY = [6]
 _SUNDAY = [0]
 
@@ -98,6 +103,30 @@ _SUNDAY = [0]
 # interval per the explicit ask, independent of the configurable NEPSE
 # index interval above.
 _MARKET_DATA_INTERVAL = timedelta(minutes=1)
+
+# Seconds past the minute each nepalstock.com.np scrape fires at. They used
+# to all fire at :00, together with every other client polling NEPSE, when
+# the server drops the most connections (2026-11-04: 172 of ~250 market
+# depth ticks and ~95% of official index ticks failed); staggering them
+# also keeps our own requests from arriving at once. Market depth runs
+# ~30 s (25 paced requests), so it goes last and still ends before :00.
+_INDEX_SECOND = 5
+_TODAY_PRICE_SECOND = 9
+_FLOOR_SHEET_SECOND = 13
+_SECTOR_SUMMARY_SECOND = 17
+_MARKET_DEPTH_SECOND = 21
+
+
+def _every(interval: timedelta, second: int) -> ScheduleSpec:
+    """Fire every `interval` on the NPT-aligned grid, `second` seconds in."""
+    return ScheduleSpec(
+        intervals=[
+            ScheduleIntervalSpec(
+                every=interval,
+                offset=_npt_aligned_offset(interval) + timedelta(seconds=second),
+            )
+        ]
+    )
 
 
 async def upsert_schedule(
@@ -140,14 +169,7 @@ async def upsert_all_schedules(client: Client) -> None:
     scraper_cfg = load_app_config().scraper
 
     nepse_interval = timedelta(minutes=scraper_cfg.nepse_interval_minutes)
-    nepse_index_spec = ScheduleSpec(
-        intervals=[
-            ScheduleIntervalSpec(
-                every=nepse_interval,
-                offset=_npt_aligned_offset(nepse_interval),
-            )
-        ]
-    )
+    nepse_index_spec = _every(nepse_interval, _INDEX_SECOND)
     nepse_index_action = ScheduleActionStartWorkflow(
         NepseIndexScrapeWorkflow.run,
         id="nepse-index-scrape-workflow",
@@ -155,21 +177,14 @@ async def upsert_all_schedules(client: Client) -> None:
     )
     await upsert_schedule(client, _NEPSE_INDEX_SCHEDULE_ID, nepse_index_spec, nepse_index_action)
 
-    market_data_spec = ScheduleSpec(
-        intervals=[
-            ScheduleIntervalSpec(
-                every=_MARKET_DATA_INTERVAL,
-                offset=_npt_aligned_offset(_MARKET_DATA_INTERVAL),
-            )
-        ]
-    )
-
     today_price_action = ScheduleActionStartWorkflow(
         NepseTodayPriceScrapeWorkflow.run,
         id="nepse-today-price-scrape-workflow",
         task_queue=_GENERAL_QUEUE,
     )
-    await upsert_schedule(client, _TODAY_PRICE_SCHEDULE_ID, market_data_spec, today_price_action)
+    await upsert_schedule(
+        client, _TODAY_PRICE_SCHEDULE_ID, _every(_MARKET_DATA_INTERVAL, _TODAY_PRICE_SECOND), today_price_action
+    )
 
     sector_summary_action = ScheduleActionStartWorkflow(
         NepseSectorSummaryScrapeWorkflow.run,
@@ -177,7 +192,10 @@ async def upsert_all_schedules(client: Client) -> None:
         task_queue=_GENERAL_QUEUE,
     )
     await upsert_schedule(
-        client, _SECTOR_SUMMARY_SCHEDULE_ID, market_data_spec, sector_summary_action
+        client,
+        _SECTOR_SUMMARY_SCHEDULE_ID,
+        _every(_MARKET_DATA_INTERVAL, _SECTOR_SUMMARY_SECOND),
+        sector_summary_action,
     )
 
     floor_sheet_action = ScheduleActionStartWorkflow(
@@ -185,7 +203,9 @@ async def upsert_all_schedules(client: Client) -> None:
         id="nepse-floor-sheet-scrape-workflow",
         task_queue=_GENERAL_QUEUE,
     )
-    await upsert_schedule(client, _FLOOR_SHEET_SCHEDULE_ID, market_data_spec, floor_sheet_action)
+    await upsert_schedule(
+        client, _FLOOR_SHEET_SCHEDULE_ID, _every(_MARKET_DATA_INTERVAL, _FLOOR_SHEET_SECOND), floor_sheet_action
+    )
 
     market_depth_action = ScheduleActionStartWorkflow(
         NepseMarketDepthScrapeWorkflow.run,
@@ -193,7 +213,10 @@ async def upsert_all_schedules(client: Client) -> None:
         task_queue=_GENERAL_QUEUE,
     )
     await upsert_schedule(
-        client, _MARKET_DEPTH_SCHEDULE_ID, market_data_spec, market_depth_action
+        client,
+        _MARKET_DEPTH_SCHEDULE_ID,
+        _every(_MARKET_DATA_INTERVAL, _MARKET_DEPTH_SECOND),
+        market_depth_action,
     )
 
     # Post-close jobs. NEPSE publishes floor-sheet broker ids and official
@@ -203,7 +226,7 @@ async def upsert_all_schedules(client: Client) -> None:
     await upsert_schedule(
         client,
         _FLOOR_SHEET_EOD_SCHEDULE_ID,
-        ScheduleSpec(calendars=[_npt_calendar(15, 20, _WEEKDAYS), _npt_calendar(17, 0, _WEEKDAYS)]),
+        ScheduleSpec(calendars=[_npt_calendar(15, 20, _SESSION_DAYS), _npt_calendar(17, 0, _SESSION_DAYS)]),
         ScheduleActionStartWorkflow(
             NepseFloorSheetEodSweepWorkflow.run,
             id="nepse-floor-sheet-eod-sweep-workflow",
@@ -214,7 +237,7 @@ async def upsert_all_schedules(client: Client) -> None:
     await upsert_schedule(
         client,
         _END_OF_DAY_SCHEDULE_ID,
-        ScheduleSpec(calendars=[_npt_calendar(15, 40, _WEEKDAYS)]),
+        ScheduleSpec(calendars=[_npt_calendar(15, 40, _SESSION_DAYS)]),
         ScheduleActionStartWorkflow(
             NepseEndOfDayWorkflow.run,
             id="nepse-end-of-day-workflow",
@@ -236,15 +259,17 @@ async def upsert_all_schedules(client: Client) -> None:
         ),
         skip_overlap,
     )
-    # Weekly safety net for the floor sheet: any past session still missing
-    # broker ids or trades (e.g. a missed evening sweep) is completed from
-    # merolagani's history.
+    # Weekly safety net for the floor sheet: any session of the last 30 days
+    # still missing broker ids or trades (e.g. a missed evening sweep) is
+    # completed from merolagani's history. The deep walk back to
+    # FLOORSHEET_BACKFILL_START_DATE is the worker-startup run's job.
     await upsert_schedule(
         client,
         _FLOOR_SHEET_HISTORY_SCHEDULE_ID,
         ScheduleSpec(calendars=[_npt_calendar(6, 0, _SUNDAY)]),
         ScheduleActionStartWorkflow(
             FloorSheetHistoryBackfillWorkflow.run,
+            args=[None, None, 30],
             id="floor-sheet-history-backfill-workflow",
             task_queue=_GENERAL_QUEUE,
         ),

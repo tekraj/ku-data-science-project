@@ -18,10 +18,24 @@ from scraper.nepse_scraper import scrape_all_nepse_data
 
 _NST = pytz.timezone("Asia/Kathmandu")
 
-# All five 1-minute market workflows call is_market_open_activity on the
-# same tick; cache the official status briefly so that's one
+# NEPSE's trading week has changed: Sunday-Thursday until 2026-04-05 (last
+# Sunday session), Monday-Friday from 2026-04-06 (first Friday session
+# 2026-04-10), and in 2022 there were extra Friday sessions (2022-05-20 ..
+# 2022-09-16) while Sundays continued. So the gate doesn't trust a fixed
+# weekday list: every day but Saturday (never a session) asks NEPSE's own
+# market status, and this set is only the fallback when that call fails.
+_EXPECTED_TRADING_WEEKDAYS = {0, 1, 2, 3, 4}  # datetime.weekday(): Mon-Fri
+_SATURDAY = 5
+
+# All five 1-minute market workflows call is_market_open_activity within
+# the same minute; cache the official status briefly so that's about one
 # nepalstock.com.np round-trip per minute, not five.
 _STATUS_CACHE_SECONDS = 20
+# If the status call fails, a status read within this long still decides
+# (before falling back to the weekday clock gate). The clock gate alone
+# let ~50-70 ticks per day through on the Dashain holidays 2026-10-19..23,
+# storing stale index values and order books.
+_STATUS_FALLBACK_SECONDS = 600
 _status_cache: tuple[float, str] | None = None
 
 
@@ -34,7 +48,12 @@ def _official_market_status(timeout: int = 10) -> str:
     now = time.monotonic()
     if _status_cache is not None and now - _status_cache[0] < _STATUS_CACHE_SECONDS:
         return _status_cache[1]
-    status = str(fetch_market_status(timeout).get("isOpen") or "").strip().upper()
+    try:
+        status = str(fetch_market_status(timeout).get("isOpen") or "").strip().upper()
+    except Exception:
+        if _status_cache is not None and now - _status_cache[0] < _STATUS_FALLBACK_SECONDS:
+            return _status_cache[1]
+        raise
     _status_cache = (now, status)
     return status
 
@@ -55,27 +74,31 @@ def _traded_today(today: date) -> bool:
 
 @activity.defn
 async def is_market_open_activity(require_open_status: bool = False) -> bool:
-    """True only Mon-Fri between 10:55 and 15:05 NPT on actual trading days.
+    """True only between 10:55 and 15:05 NPT on actual trading days.
 
     The window is widened from the 11:00-14:59 core session so a tick lands
     just after the close and captures the closing prints (padding only --
     it does not change when NEPSE itself opens or closes).
 
-    Inside the window, NEPSE's own market-open status decides, so public
-    holidays are skipped. A clock-only gate used to let every scraper run on
-    holidays (2026-09-21 and 09-25), storing hundreds of flat index ticks and
-    ~170k today-price rows that repeated the previous session. During the
+    Inside the window, NEPSE's own market-open status decides -- on every day
+    except Saturday, so public holidays are skipped and a change of trading
+    week (see _EXPECTED_TRADING_WEEKDAYS) is followed automatically. A
+    clock-only gate used to let every scraper run on holidays (2026-09-21
+    and 09-25), storing hundreds of flat index ticks and ~170k today-price
+    rows that repeated the previous session. During the
     post-close padding (status already "CLOSE") the tick is allowed only if
-    today's session was actually seen. If the status call itself fails, fall
-    back to the clock (writers also drop rows whose businessDate isn't
-    today), so an API hiccup can't silently stop collection.
+    today's session was actually seen. If the status call itself fails, the
+    last status read in the past 10 minutes decides; with none, fall back to
+    the clock on the expected trading weekdays (writers also drop rows whose
+    businessDate isn't today), so an API outage can't silently stop
+    collection.
 
     require_open_status=True drops the padding: only an "OPEN" status
     passes. Used by market depth, whose endpoint errors outside the
     continuous session (it failed every day at 10:55-10:59 and 15:00-15:04)
     and has no closing print to capture."""
     now = _now_nst()
-    if now.weekday() > 4:  # 5=Sat, 6=Sun
+    if now.weekday() == _SATURDAY:
         return False
     if not (dtime(10, 55) <= now.time() <= dtime(15, 5)):
         return False
@@ -84,7 +107,7 @@ async def is_market_open_activity(require_open_status: bool = False) -> bool:
         status = await asyncio.to_thread(_official_market_status)
     except Exception as e:  # noqa: BLE001 - degrade to the clock gate
         activity.logger.warning(f"[MarketOpen] official status unavailable, using clock gate: {e}")
-        return True
+        return now.weekday() in _EXPECTED_TRADING_WEEKDAYS
 
     if "OPEN" in status and "CLOSE" not in status:
         return True

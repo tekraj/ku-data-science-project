@@ -5,6 +5,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Any
 
+import requests
 from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from temporalio import activity
@@ -21,7 +22,7 @@ from nepse_common.models import (
     ResearchBackfillState,
 )
 
-from scraper.merolagani_floorsheet import FloorSheetHistory
+from scraper.merolagani_floorsheet import FloorSheetHistory, FloorSheetPageError
 from scraper.merolagani_history import npt_today
 from scraper.nepse_market_data import (
     FloorSheetPager,
@@ -56,6 +57,12 @@ _FLOOR_SHEET_HISTORY_DATASET = "floorsheet_history"
 # stable, but firms rename and merge, so today's name for a number may be
 # wrong for 2020. Older sessions keep the member id only.
 _BROKER_NAME_MAX_AGE_DAYS = 90
+
+# merolagani history requests: generous timeout (old dates take 10-30 s per
+# page server-side) and backoff between retries of one page / one date
+# search, each retry on a fresh session.
+_MEROLAGANI_FLOOR_TIMEOUT = 120
+_MEROLAGANI_RETRY_BACKOFF_SECONDS = (10, 30, 90)
 _BROKER_NAME_CACHE_SECONDS = 3600
 _broker_name_cache: tuple[float, dict[int, str]] | None = None
 
@@ -387,17 +394,56 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
         recent = (npt_today() - day).days <= _BROKER_NAME_MAX_AGE_DAYS
         names = _broker_names(session) if recent else {}
 
-    history = FloorSheetHistory(timeout)
-    total, total_pages, rows = await asyncio.to_thread(history.open, day)
+    timeout = max(timeout, _MEROLAGANI_FLOOR_TIMEOUT)
+
+    async def _open() -> tuple[FloorSheetHistory, int, int, list[dict[str, Any]]]:
+        # An empty search result is ambiguous (the server also answers an
+        # overloaded query with no table) and the calendar says this was a
+        # session, so retry before believing it. If no attempt got any answer
+        # at all (network/DNS down -- e.g. 2026-10-28..11-03), raise: that's a
+        # failure to report, not "merolagani has no data".
+        last_error: Exception | None = None
+        answered = False
+        for attempt in range(len(_MEROLAGANI_RETRY_BACKOFF_SECONDS) + 1):
+            history = FloorSheetHistory(timeout)
+            try:
+                total, pages, first_rows = await asyncio.to_thread(history.open, day)
+                answered = True
+                if total:
+                    return history, total, pages, first_rows
+            except requests.RequestException as e:
+                last_error = e
+                activity.logger.warning(f"[FloorSheetHistory] {day_iso} search failed: {e}")
+            if attempt < len(_MEROLAGANI_RETRY_BACKOFF_SECONDS):
+                activity.heartbeat(page)
+                await asyncio.sleep(_MEROLAGANI_RETRY_BACKOFF_SECONDS[attempt])
+        if not answered and last_error is not None:
+            raise last_error
+        return history, 0, 0, []
+
+    async def _page(number: int) -> tuple[int, list[dict[str, Any]]]:
+        nonlocal history
+        for attempt in range(len(_MEROLAGANI_RETRY_BACKOFF_SECONDS) + 1):
+            try:
+                _, pages, page_rows = await asyncio.to_thread(history.page, number)
+                return pages, page_rows
+            except (FloorSheetPageError, requests.RequestException) as e:
+                if attempt == len(_MEROLAGANI_RETRY_BACKOFF_SECONDS):
+                    raise
+                activity.logger.warning(f"[FloorSheetHistory] {e}; retrying")
+                activity.heartbeat(number)
+                await asyncio.sleep(_MEROLAGANI_RETRY_BACKOFF_SECONDS[attempt])
+                history, _, _, _ = await _open()
+
+    details = activity.info().heartbeat_details
+    page = int(details[0]) if details else 1
+    history, total, total_pages, rows = await _open()
     if total == 0:
         return {"day": day_iso, "status": "no data", "total": 0}
     if with_broker >= total * _FLOOR_SHEET_COMPLETE_RATIO:
         return {"day": day_iso, "status": "complete", "total": total, "stored_with_broker": with_broker}
-
-    details = activity.info().heartbeat_details
-    page = int(details[0]) if details else 1
     if page > 1:
-        _, _, rows = await asyncio.to_thread(history.page, page)
+        total_pages, rows = await _page(page)
 
     inserted = updated = 0
     while True:
@@ -423,14 +469,16 @@ async def backfill_floor_sheet_day_activity(day_iso: str, timeout: int, pause_se
         if page > total_pages:
             break
         await asyncio.sleep(pause_seconds)
-        _, total_pages, rows = await asyncio.to_thread(history.page, page)
+        total_pages, rows = await _page(page)
 
     with session_scope(config.database) as session:
         stored, stored_with_broker = session.execute(
             select(func.count(), func.count(NepseFloorsheet.buyer_member_id)).where(NepseFloorsheet.business_date == day_iso)
         ).one()
+        # Every page arrived intact (page() raises otherwise), so the day is
+        # done; rows_written records merolagani's listed total for audits.
         state = pg_insert(ResearchBackfillState.__table__).values(
-            dataset=_FLOOR_SHEET_HISTORY_DATASET, symbol=day_iso, exhausted=True, rows_written=inserted + updated
+            dataset=_FLOOR_SHEET_HISTORY_DATASET, symbol=day_iso, exhausted=True, rows_written=total
         )
         session.execute(
             state.on_conflict_do_update(

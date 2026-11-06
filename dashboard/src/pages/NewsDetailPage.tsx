@@ -4,6 +4,7 @@ import { apiRequest } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { AppShell } from "../components/AppShell";
 import { TopBar } from "../components/TopBar";
+import { NavLinks } from "../components/NavLinks";
 
 type Article = {
   id: number;
@@ -58,7 +59,7 @@ export function NewsDetailPage() {
           rightLink={
             <>
               <Link className="btn-ghost" to="/news">← Back to News</Link>
-              <Link className="btn-ghost" to="/">Dashboard</Link>
+              <NavLinks />
             </>
           }
         />

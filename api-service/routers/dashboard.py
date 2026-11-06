@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from deps import get_current_claims, get_db
+from services.floorsheet_service import FloorSheetService
+from services.market_service import MarketService
 from services.news_service import NewsService
 from services.nepse_service import NepseIndexService
 from services.pipeline_log_service import PipelineLogService
@@ -96,15 +99,32 @@ def dashboard_news_detail(
 @router.get("/pipeline-logs")
 def dashboard_pipeline_logs(
     limit: int = Query(default=100, ge=1, le=1000),
+    status_filter: str = Query(default="all", alias="status", description="all / success / failed"),
+    source: str = Query(default="", description="exact nepse_source"),
+    include_skipped: bool = Query(default=True, description="include market-closed skip rows"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    return PipelineLogService(db).get_recent_logs(limit=limit)
+    service = PipelineLogService(db)
+    return {
+        **service.get_recent_logs(
+            limit=limit, status=status_filter, source=source, include_skipped=include_skipped
+        ),
+        "sources": service.get_sources(),
+    }
+
+
+@router.get("/pipeline-health")
+def dashboard_pipeline_health(
+    hours: int = Query(default=24, ge=1, le=720),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return PipelineLogService(db).get_health(hours)
 
 
 @router.get("/indicators")
 def dashboard_indicators(
     index_name: str = Query(default="NEPSE"),
-    days: int = Query(default=400, ge=30, le=2000),
+    days: int = Query(default=400, ge=0, le=20000, description="calendar days; 0 = full history"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return NepseIndexService(db).get_indicators(index_name, days)
@@ -115,3 +135,64 @@ def dashboard_indices(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     return {"indices": NepseIndexService(db).list_index_options()}
+
+
+@router.get("/market/indices")
+def market_indices(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return {"indices": MarketService(db).list_indices()}
+
+
+@router.get("/market/index-daily")
+def market_index_daily(
+    index_name: str = Query(default="NEPSE"),
+    days: int = Query(default=365, ge=0, le=20000, description="calendar days; 0 = full history"),
+    threshold: float = Query(default=0.2, gt=0, lt=1, description="drawdown episode depth, 0.2 = 20%"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return MarketService(db).index_daily(index_name, days, threshold)
+
+
+@router.get("/market/index-intraday")
+def market_index_intraday(
+    index_name: str = Query(default="NEPSE"),
+    day: date | None = Query(default=None, alias="date"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return MarketService(db).index_intraday(index_name, day)
+
+
+@router.get("/market/depth-symbols")
+def market_depth_symbols(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return MarketService(db).depth_symbols()
+
+
+@router.get("/market/depth")
+def market_depth(
+    symbol: str = Query(...),
+    day: date | None = Query(default=None, alias="date"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return MarketService(db).depth(symbol.upper(), day)
+
+
+@router.get("/floorsheet/summary")
+def floorsheet_summary(
+    day: date | None = Query(default=None, alias="date"),
+    symbol: str = Query(default=""),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return FloorSheetService(db).summary(day.isoformat() if day else None, symbol.upper() or None)
+
+
+@router.get("/floorsheet/concentration")
+def floorsheet_concentration(
+    sessions: int = Query(default=60, ge=5, le=250),
+    symbol: str = Query(default=""),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    return FloorSheetService(db).concentration(sessions, symbol.upper() or None)
+
+
+@router.get("/floorsheet/coverage")
+def floorsheet_coverage(db: Session = Depends(get_db)) -> dict[str, Any]:
+    return FloorSheetService(db).coverage()

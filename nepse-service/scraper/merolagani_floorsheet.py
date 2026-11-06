@@ -17,6 +17,12 @@ FloorSheetHistory instance reads one date's pages sequentially.
 Columns: #, Transact. No. (= NEPSE contract id), Symbol, Buyer (broker
 no.), Seller (broker no.), Quantity, Rate, Amount. There is no trade time
 and no broker name.
+
+The server is slow for old dates (each page is a fresh server-side query:
+~1 s for 2026 dates, ~7 s for 2025, 10-30 s for 2020-2023), and when a
+query runs too long it answers with a page that has no table -- which must
+be treated as a failure, not as "no more rows". page() therefore raises
+FloorSheetPageError unless the response is exactly the requested page.
 """
 from __future__ import annotations
 
@@ -37,10 +43,15 @@ _HEADERS = {
 _PREFIX = "ctl00$ContentPlaceHolder1$"
 
 _HIDDEN_RE = re.compile(r'<input type="hidden" name="([^"]+)" id="[^"]*" value="([^"]*)"')
-_SUMMARY_RE = re.compile(r"Showing\s+[\d,]+\s*-\s*[\d,]+\s+of\s+([\d,]+)\s+records\.\s*\[Total pages:\s*([\d,]+)\]")
+_SUMMARY_RE = re.compile(r"Showing\s+([\d,]+)\s*-\s*[\d,]+\s+of\s+([\d,]+)\s+records\.\s*\[Total pages:\s*([\d,]+)\]")
+PAGE_SIZE = 500
 _ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S)
 _CELL_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
 _TAG_RE = re.compile(r"<[^>]+>|\s+")
+
+
+class FloorSheetPageError(RuntimeError):
+    """merolagani answered a page request without the requested page."""
 
 
 def _num(text: str) -> float | None:
@@ -73,12 +84,15 @@ class FloorSheetHistory:
         resp.raise_for_status()
         self._html = resp.text
 
-    def _parse(self) -> tuple[int, int, list[dict[str, Any]]]:
+    def _parse(self) -> tuple[int, int, int, list[dict[str, Any]]]:
+        """(total_records, total_pages, first record number, rows); all
+        zero/empty when the response has no floor-sheet table."""
         m = _SUMMARY_RE.search(self._html)
         if not m:
-            return 0, 0, []
-        total_records = int(m.group(1).replace(",", ""))
-        total_pages = int(m.group(2).replace(",", ""))
+            return 0, 0, 0, []
+        first_record = int(m.group(1).replace(",", ""))
+        total_records = int(m.group(2).replace(",", ""))
+        total_pages = int(m.group(3).replace(",", ""))
 
         start = self._html.find("<table")
         end = self._html.find("</table>", start)
@@ -101,7 +115,7 @@ class FloorSheetHistory:
                     "contract_amount": _num(amount),
                 }
             )
-        return total_records, total_pages, rows
+        return total_records, total_pages, first_record, rows
 
     def open(self, day: date) -> tuple[int, int, list[dict[str, Any]]]:
         """Search `day`; returns (total_records, total_pages, page-1 rows).
@@ -120,10 +134,12 @@ class FloorSheetHistory:
                 f"{_PREFIX}txtSellerBrokerCodeFilter": "",
             }
         )
-        return self._parse()
+        total, pages, _, rows = self._parse()
+        return total, pages, rows
 
     def page(self, number: int) -> tuple[int, int, list[dict[str, Any]]]:
-        """1-based page of the date passed to open()."""
+        """1-based page of the date passed to open(). Raises
+        FloorSheetPageError unless the response is that exact page."""
         self._post(
             {
                 "__EVENTTARGET": "",
@@ -133,4 +149,10 @@ class FloorSheetHistory:
                 f"{_PREFIX}PagerControl1$btnPaging": "",
             }
         )
-        return self._parse()
+        total, pages, first_record, rows = self._parse()
+        expected_first = (number - 1) * PAGE_SIZE + 1
+        if not rows or first_record != expected_first:
+            raise FloorSheetPageError(
+                f"{self._date_text} page {number}: got {len(rows)} rows starting at record {first_record}, expected {expected_first}"
+            )
+        return total, pages, rows
